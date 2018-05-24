@@ -1,9 +1,9 @@
 import json
-from platform import platform
-from rplidar import *
-
-from threading import Thread
 import serial
+import rplidar
+
+from platform import platform
+from threading import Thread
 
 PLATFORM = str(platform()).lower()
 
@@ -13,7 +13,7 @@ class Gyroscope(object):
     baudrate = 9600
     _active_serial_connection = None
 
-    def __init__(self, port, baudrate=9600, timeout=1):
+    def __init__(self, port, baudrate=38400, timeout=1):
         """Initilize GyroScope object for communicating with the sensor.
 
         Parameters
@@ -54,13 +54,15 @@ class Gyroscope(object):
         read_data = ''
 
         while True:
-            if self._active_serial_connection.in_waiting():
-                c = chr(self._active_serial_connection.read())
+            if self._active_serial_connection.in_waiting:
+                c = chr(self._active_serial_connection.read()[0])
+
                 if len(read_data) > 0 or c == '{':
                     read_data += c
 
                 if c == '}':
                     data = self.process_data_string(read_data)
+                    read_data = ''
                     if data is not None:
                         yield data
 
@@ -68,7 +70,7 @@ class Gyroscope(object):
     def process_data_string(data_string):
         try:
             parsed = json.loads(data_string)
-            return parsed['x'], parsed['y'], parsed['z']
+            return parsed['distance'], parsed['degrees']
         except json.decoder.JSONDecodeError:
             return None
 
@@ -85,22 +87,21 @@ class ConnectionStates(object):
 
 class Gydar(object):
     """Class to combine the GyroScope and RPLidar objects to run them in their respective threads."""
-    gyro_port = '/dev/usb0' if PLATFORM == 'linux' else 'COM1'
-    lidar_port = '/dev/usb1' if PLATFORM == 'linux' else 'COM2'
+    gyro_port = '/dev/ttyUSB0' if PLATFORM.startswith('linux') else 'COM1'
+    lidar_port = '/dev/ttyUSB1' if PLATFORM.startswith('linux') else 'COM2'
     connected = ConnectionStates.NONE_CONNECTED
-    should_be_connected = ConnectionStates.NONE_CONNECTED
 
     lidar = None
     gyro = None
 
-    raw_lidar_output = [None] * 360
+    raw_lidar_output = [None] * 361
     raw_gyro_output = (None, None, None)  # x, y, z degrees?
 
     lidar_thread = None
     gyro_thread = None
 
     def __init__(self):
-        print('Gydar object created')
+        pass
 
     def __str__(self):
         return "LIDAR: {}, GYRO: {}, CONNECTED: {}".format(self.lidar_port, self.gyro_port, self.connected)
@@ -117,9 +118,9 @@ class Gydar(object):
 
     def connect_lidar(self):
         print("Connecting lidar!")
-        self.lidar = RPLidar(self.lidar_port)
+        self.lidar = rplidar.RPLidar(self.lidar_port)
 
-        self.should_be_connected = self.connected = self.connected | (1 << ConnectionStates.LIDAR_CONNECTED)
+        self.connected = self.connected | ConnectionStates.LIDAR_CONNECTED
 
         self.lidar_thread = Thread(target=lidar_loop, args=(self.lidar, self))  # create thread
         self.lidar_thread.start()
@@ -129,7 +130,7 @@ class Gydar(object):
         self.lidar.stop()
         self.lidar.disconnect()
 
-        self.should_be_connected = self.connected = self.connected & ~(1 << ConnectionStates.LIDAR_CONNECTED)
+        self.connected = self.connected & ~ConnectionStates.LIDAR_CONNECTED
 
         self.lidar_thread.join()  # wait for thread to finish
 
@@ -137,13 +138,13 @@ class Gydar(object):
         print("Connecting gyro!")
         self.gyro = Gyroscope(self.gyro_port)
 
-        self.should_be_connected = self.connected = self.connected & ~(1 << ConnectionStates.GYRO_CONNECTED)
+        self.connected = self.connected | ConnectionStates.GYRO_CONNECTED
 
         self.gyro_thread = Thread(target=gyro_loop, args=(self.gyro, self))  # create thread
         self.gyro_thread.start()
 
     def disconnect_gyro(self):
-        self.should_be_connected = self.connected = self.connected | (1 << ConnectionStates.GYRO_CONNECTED)
+        self.connected = self.connected & ~ConnectionStates.GYRO_CONNECTED
 
         self.gyro_thread.join()  # wait for thread to finish
 
@@ -151,17 +152,18 @@ class Gydar(object):
 """THREADED FUNCTIONS"""
 
 
-def lidar_loop(lidar: RPLidar, gydar: Gydar):
+def lidar_loop(lidar: rplidar.RPLidar, gydar: Gydar):
     while gydar.connected & ConnectionStates.LIDAR_CONNECTED:
         try:
-            for measurement in lidar.iter_scans():
-                # measurement = (quality, angle, distance)
-                gydar.raw_lidar_output[round(measurement[1])] = measurement[2]
+            for measurements in lidar.iter_scans():
+                for measurement in measurements:
+                    # measurement = (quality, angle, distance)
+                    gydar.raw_lidar_output[round(measurement[1])] = measurement[2]
 
                 if not gydar.connected & ConnectionStates.LIDAR_CONNECTED:
                     break
 
-        except RPLidarException as e:
+        except rplidar.RPLidarException as e:
             raise GydarError('Connection with Lidar closed unexpectedly!', 'LIDAR', lidar.port) from e
 
 
@@ -186,7 +188,7 @@ class GydarError(Exception):
     """Custom Gydar Exception"""
 
     def __init__(self, message, sensor_type='', port=''):
-        super(message)
+        super(GydarError, self).__init__(message)
         self.port = port
         self.type = sensor_type
 
