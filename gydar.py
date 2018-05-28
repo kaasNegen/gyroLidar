@@ -1,9 +1,12 @@
+import glob
 import json
 import serial
 import rplidar
 
 from platform import platform
 from threading import Thread
+
+import sys
 
 PLATFORM = str(platform()).lower()
 
@@ -18,11 +21,11 @@ class Gyroscope(object):
 
         Parameters
         ----------
-        port : str
+        :port : str
             Serial port name to which sensor is connected
-        baudrate : int, optional
+        :baudrate : int, optional
             Baudrate for serial connection (the default is 115200)
-        timeout : float, optional
+        :timeout : float, optional
             Serial port connection timeout in seconds (the default is 1)
         """
 
@@ -101,6 +104,14 @@ class Gydar(object):
     gyro_thread = None
 
     def __init__(self):
+        ports = serial_ports()
+        if len(ports) < 2 :
+            print('COULDNT FIND MORE THAN 1 COM/USB PORTS!')
+        else:
+            self.lidar_port = ports[0]
+            self.gyro_port = ports[1]
+            print('Found USB/COM ports:', ports)
+
         pass
 
     def __str__(self):
@@ -117,34 +128,44 @@ class Gydar(object):
         self.connect_lidar()
 
     def connect_lidar(self):
-        self.lidar = rplidar.RPLidar(self.lidar_port)
+        try:
+            self.lidar = rplidar.RPLidar(self.lidar_port)
+        except rplidar.RPLidarException as e:
+            print('LIDAR COULDNT CONNECT TO ', self.lidar_port, e)
+            return
 
         self.connected = self.connected | ConnectionStates.LIDAR_CONNECTED
 
         self.lidar_thread = Thread(target=lidar_loop, args=(self.lidar, self))  # create thread
         self.lidar_thread.start()
 
-    def disconnect_lidar(self):
+    def disconnect_lidar(self, no_join=False):
 
         self.lidar.stop()
         self.lidar.disconnect()
 
         self.connected = self.connected & ~ConnectionStates.LIDAR_CONNECTED
 
-        self.lidar_thread.join()  # wait for thread to finish
+        if not no_join:
+            self.lidar_thread.join()  # wait for thread to finish
 
     def connect_gyro(self):
-        self.gyro = Gyroscope(self.gyro_port)
+        try:
+            self.gyro = Gyroscope(self.gyro_port)
+        except GyroscopeError as e:
+            print('GYRO COULDNT CONNECT TO ', self.gyro_port, e)
+            return
 
         self.connected = self.connected | ConnectionStates.GYRO_CONNECTED
 
         self.gyro_thread = Thread(target=gyro_loop, args=(self.gyro, self))  # create thread
         self.gyro_thread.start()
 
-    def disconnect_gyro(self):
+    def disconnect_gyro(self, no_join=False):
         self.connected = self.connected & ~ConnectionStates.GYRO_CONNECTED
 
-        self.gyro_thread.join()  # wait for thread to finish
+        if not no_join:
+            self.gyro_thread.join()  # wait for thread to finish
 
 
 """THREADED FUNCTIONS"""
@@ -162,6 +183,7 @@ def lidar_loop(lidar: rplidar.RPLidar, gydar: Gydar):
                     break
 
         except rplidar.RPLidarException as e:
+            gydar.disconnect_lidar(no_join=True)
             raise GydarError('Connection with Lidar closed unexpectedly!', 'LIDAR', lidar.port) from e
 
 
@@ -176,6 +198,7 @@ def gyro_loop(gyro: Gyroscope, gydar: Gydar):
                     break
 
         except GyroscopeError as e:
+            gydar.disconnect_gyro(no_join=True)
             raise GydarError('Connection with Lidar closed unexpectedly!', 'GYROSCOPE', gyro.port) from e
 
 
@@ -197,3 +220,32 @@ class GydarError(Exception):
 class GyroscopeError(Exception):
     """Custom Gyroscope Exception (empty, for separate excepting)"""
     pass
+
+
+def serial_ports():
+    """ Lists serial port names
+
+        :raises EnvironmentError:
+            On unsupported or unknown platforms
+        :returns:
+            A list of the serial ports available on the system
+    """
+    if sys.platform.startswith('win'):
+        ports = ['COM%s' % (i + 1) for i in range(256)]
+    elif sys.platform.startswith('linux') or sys.platform.startswith('cygwin'):
+        # this excludes your current terminal "/dev/tty"
+        ports = glob.glob('/dev/tty[A-Za-z]*')
+    elif sys.platform.startswith('darwin'):
+        ports = glob.glob('/dev/tty.*')
+    else:
+        raise EnvironmentError('Unsupported platform')
+
+    result = []
+    for port in ports:
+        try:
+            s = serial.Serial(port)
+            s.close()
+            result.append(port)
+        except (OSError, serial.SerialException):
+            pass
+    return result
