@@ -98,7 +98,7 @@ class Gydar(object):
     gyro = None
 
     raw_lidar_output = [None] * 361
-    raw_gyro_output = (None, None, None)  # x, y, z degrees?
+    raw_gyro_output = (None, None)  # x, y, z degrees?
 
     lidar_thread = None
     gyro_thread = None
@@ -174,7 +174,7 @@ class Gydar(object):
 def lidar_loop(lidar: rplidar.RPLidar, gydar: Gydar):
     while gydar.connected & ConnectionStates.LIDAR_CONNECTED:
         try:
-            for measurements in lidar.iter_scans():
+            for measurements in lidar.iter_scans(max_buf_meas=5000):
                 for measurement in measurements:
                     # measurement = (quality, angle, distance)
                     gydar.raw_lidar_output[round(measurement[1])] = measurement[2]
