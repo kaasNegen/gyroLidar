@@ -13,7 +13,7 @@ class Gyroscope(object):
     baudrate = 9600
     _active_serial_connection = None
 
-    def __init__(self, port, baudrate=38400, timeout=1):
+    def __init__(self, port, baudrate=9600, timeout=1):
         """Initilize GyroScope object for communicating with the sensor.
 
         Parameters
@@ -117,7 +117,6 @@ class Gydar(object):
         self.connect_lidar()
 
     def connect_lidar(self):
-        print("Connecting lidar!")
         self.lidar = rplidar.RPLidar(self.lidar_port)
 
         self.connected = self.connected | ConnectionStates.LIDAR_CONNECTED
@@ -135,7 +134,6 @@ class Gydar(object):
         self.lidar_thread.join()  # wait for thread to finish
 
     def connect_gyro(self):
-        print("Connecting gyro!")
         self.gyro = Gyroscope(self.gyro_port)
 
         self.connected = self.connected | ConnectionStates.GYRO_CONNECTED
