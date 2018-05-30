@@ -104,13 +104,13 @@ class Gydar(object):
     gyro_thread = None
 
     def __init__(self):
-        ports = serial_ports()
-        if len(ports) < 2 :
-            print('COULDNT FIND MORE THAN 1 COM/USB PORTS!')
-        else:
-            self.lidar_port = ports[0]
-            self.gyro_port = ports[1]
-            print('Found USB/COM ports:', ports)
+        # ports = serial_ports()
+        # if len(ports) < 2 :
+        #     print('COULDNT FIND MORE THAN 1 COM/USB PORTS!')
+        # else:
+        #     self.lidar_port = ports[0]
+        #     self.gyro_port = ports[1]
+        #     print('Found USB/COM ports:', ports)
 
         pass
 
@@ -177,14 +177,22 @@ def lidar_loop(lidar: rplidar.RPLidar, gydar: Gydar):
             for measurements in lidar.iter_scans(max_buf_meas=5000):
                 for measurement in measurements:
                     # measurement = (quality, angle, distance)
-                    gydar.raw_lidar_output[round(measurement[1])] = measurement[2]
+                    index = round(measurement[1])
+                    if index < len(gydar.raw_lidar_output):
+                        gydar.raw_lidar_output[index] = measurement[2]
 
                 if not gydar.connected & ConnectionStates.LIDAR_CONNECTED:
                     break
 
+        except serial.SerialException as e:
+            gydar.disconnect_lidar(no_join=True)
+            gydar.connect_lidar()
+            return
         except rplidar.RPLidarException as e:
             gydar.disconnect_lidar(no_join=True)
-            raise GydarError('Connection with Lidar closed unexpectedly!', 'LIDAR', lidar.port) from e
+            gydar.connect_lidar()
+            print('Connection with Lidar closed unexpectedly!', 'LIDAR', lidar.port)
+            return
 
 
 def gyro_loop(gyro: Gyroscope, gydar: Gydar):
